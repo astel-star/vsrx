@@ -1,0 +1,21 @@
+{
+  "name": "vidstorm-stremio-addon",
+  "version": "1.0.0",
+  "description": "Vidstorm Stremio Addon - Auto token generation",
+  "main": "addon.js",
+  "scripts": {
+    "start": "start.bat",
+    "dev": "start.bat",
+    "proxy": "node token-refresh-proxy.js",
+    "addon": "node addon.js"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.10",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "axios-cookiejar-support": "^4.0.7",
+    "tough-cookie": "^4.1.3",
+    "crypto-js": "^4.2.0"
+  }
+}
