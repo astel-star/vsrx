@@ -364,9 +364,13 @@ app.get('/proxy', async (req, res) => {
       // Stream video segments directly
       let contentType = response.headers['content-type'] || 'video/mp4';
       
-      // Fix for TS segments
-      if (url.includes('.ts') || contentType.includes('mp2t') || contentType.includes('mpeg2')) {
+      // Fix for TS segments - detect by URL patterns or content type
+      const isTikTokSegment = url.includes('tiktokcdn.com') || url.match(/[a-f0-9]{32,}/);
+      const isTsFile = url.includes('.ts') || contentType.includes('mp2t') || contentType.includes('mpeg2');
+      
+      if (isTsFile || isTikTokSegment) {
         contentType = 'video/mp2t';
+        console.log(`[Proxy] Forcing video/mp2t for segment: ${url.substring(0, 60)}...`);
       }
       
       res.set('Content-Type', contentType);
