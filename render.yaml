@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: vidstorm-addon
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node stremio-addon/addon.js
+    envVars:
+      - key: BASE_URL
+        value: https://vidstorm-addon.onrender.com  # Update after first deploy
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health

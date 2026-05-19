@@ -1,0 +1,17 @@
+{
+  "name": "vidstorm-resolver",
+  "version": "1.0.0",
+  "description": "Vidstorm stream resolver - pure JavaScript implementation",
+  "main": "stremio-addon/addon.js",
+  "scripts": {
+    "start": "node stremio-addon/addon.js",
+    "fetch": "node stream_fetcher.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "playwright": "^1.40.0",
+    "node-forge": "^1.3.1"
+  }
+}

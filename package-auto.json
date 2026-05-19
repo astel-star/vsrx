@@ -1,0 +1,16 @@
+{
+  "name": "vidstorm-resolver-auto",
+  "version": "1.0.0",
+  "description": "Vidstorm resolver with automatic token extraction (uses existing Chrome)",
+  "main": "server-auto.js",
+  "scripts": {
+    "start": "node server-auto.js",
+    "extract": "node token-extractor.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "puppeteer-core": "^21.6.0"
+  }
+}

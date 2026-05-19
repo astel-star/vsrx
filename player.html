@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vidstorm Live Player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        .video-container {
+            position: relative;
+            background: #000;
+        }
+        video {
+            width: 100%;
+            height: auto;
+            max-height: 70vh;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold mb-6 text-center">Vidstorm Live Resolver Player</h1>
+        
+        <!-- Resolver Input -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-2">TMDB Movie ID</label>
+                    <input type="text" id="movieId" value="672" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                        placeholder="e.g., 672">
+                    <p class="text-xs text-gray-400 mt-1">Enter TMDB ID (auto-extracts stream ID)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2">Encoded ID (optional)</label>
+                    <input type="text" id="encodedId" value="" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                        placeholder="Auto-detected">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2">Addon URL</label>
+                    <input type="text" id="resolverUrl" value="http://localhost:7000" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded text-white border border-gray-600 focus:border-blue-500 focus:outline-none">
+                    <p class="text-xs text-gray-400 mt-1">Stremio addon endpoint</p>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="resolveMovie()" 
+                    class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded font-medium transition">
+                    Resolve Streams
+                </button>
+                <button onclick="resolveByImdb()" 
+                    class="px-6 py-2 bg-purple-600 hover:bg-purple-700 rounded font-medium transition">
+                    Resolve by IMDB
+                </button>
+            </div>
+            <div id="tmdbInfo" class="hidden mt-4 p-4 bg-gray-700 rounded">
+                <!-- TMDB metadata will be shown here -->
+            </div>
+        </div>
+        
+        <!-- Results -->
+        <div id="results" class="hidden">
+            <!-- Stream Sources -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Available Sources</h2>
+                <div id="sourcesList" class="space-y-2">
+                    <!-- Sources will be listed here -->
+                </div>
+            </div>
+            
+            <!-- Video Player -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Player</h2>
+                <div class="video-container rounded-lg overflow-hidden">
+                    <video id="videoPlayer" controls class="w-full"></video>
+                </div>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <select id="qualitySelect" class="px-4 py-2 bg-gray-700 rounded text-white border border-gray-600" onchange="changeQuality()">
+                        <option value="">Select Quality</option>
+                    </select>
+                    <select id="subtitleSelect" class="px-4 py-2 bg-gray-700 rounded text-white border border-gray-600" onchange="loadSubtitle()">
+                        <option value="">Select Subtitle</option>
+                    </select>
+                    <button onclick="showDebugPanel()" class="px-4 py-2 bg-green-700 hover:bg-green-600 rounded text-white text-sm font-medium">
+                        Show Debug
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Subtitles -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">Subtitles</h2>
+                <div id="subtitlesList" class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <!-- Subtitles will be listed here -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading -->
+        <div id="loading" class="hidden text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            <p class="mt-2 text-gray-400">Resolving streams...</p>
+        </div>
+        
+        <!-- Error -->
+        <div id="error" class="hidden bg-red-900/50 border border-red-500 rounded-lg p-4 mb-6">
+            <p id="errorText" class="text-red-200"></p>
+        </div>
+        
+        <!-- Debug Panel -->
+        <div id="debugPanel" class="hidden bg-gray-900/80 border border-gray-700 rounded-lg p-4 mt-6">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-lg font-semibold text-green-400">HLS Debug Console</h3>
+                <div class="flex gap-2">
+                    <button onclick="exportDebugLog()" class="text-sm text-blue-400 hover:text-blue-300">Export Logs</button>
+                    <button onclick="clearDebugLog()" class="text-sm text-gray-400 hover:text-white">Clear</button>
+                </div>
+            </div>
+            <div id="debugLog" class="font-mono text-xs text-gray-300 bg-black/50 rounded p-3 h-64 overflow-y-auto whitespace-pre-wrap">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let hls = null;
+        let currentStreams = {};
+        let currentSubtitles = [];
+        let debugLogs = [];
+
+        // Custom logging that also displays in the UI
+        function debugLog(level, ...args) {
+            const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+            const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+            const logEntry = `[${timestamp}] ${message}`;
+            
+            debugLogs.push(logEntry);
+            if (debugLogs.length > 500) debugLogs.shift(); // Keep last 500 logs
+            
+            // Also log to original console (not the overridden one)
+            if (level === 'error') originalConsoleError(...args);
+            else if (level === 'warn') originalConsoleWarn(...args);
+            else originalConsoleLog(...args);
+            
+            // Update UI if panel is visible
+            const debugLogDiv = document.getElementById('debugLog');
+            if (debugLogDiv) {
+                debugLogDiv.textContent = debugLogs.join('\n');
+                debugLogDiv.scrollTop = debugLogDiv.scrollHeight;
+            }
+        }
+
+        function clearDebugLog() {
+            debugLogs = [];
+            document.getElementById('debugLog').textContent = '';
+        }
+
+        function exportDebugLog() {
+            const blob = new Blob([debugLogs.join('\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `hls-debug-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function showDebugPanel() {
+            document.getElementById('debugPanel').classList.remove('hidden');
+        }
+
+        // Store original console methods
+        const originalConsoleLog = console.log.bind(console);
+        const originalConsoleError = console.error.bind(console);
+        const originalConsoleWarn = console.warn.bind(console);
+
+        // Custom debug logger that doesn't call itself
+        function captureDebug(...args) {
+            if (args[0] && typeof args[0] === 'string' && args[0].startsWith('[DEBUG]')) {
+                const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+                const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+                const logEntry = `[${timestamp}] ${message}`;
+                
+                debugLogs.push(logEntry);
+                if (debugLogs.length > 500) debugLogs.shift();
+                
+                // Update UI
+                const debugLogDiv = document.getElementById('debugLog');
+                if (debugLogDiv) {
+                    debugLogDiv.textContent = debugLogs.join('\n');
+                    debugLogDiv.scrollTop = debugLogDiv.scrollHeight;
+                }
+            }
+            // Call original without triggering ourselves
+            originalConsoleLog.apply(console, args);
+        }
+
+        console.log = captureDebug;
+
+        async function resolveMovie() {
+            const movieId = document.getElementById('movieId').value;
+            const resolverUrl = document.getElementById('resolverUrl').value;
+            
+            if (!movieId) {
+                showError('Please enter a TMDB Movie ID');
+                return;
+            }
+            
+            showLoading(true);
+            hideError();
+            
+            try {
+                // Call Stremio addon stream endpoint
+                const url = `${resolverUrl}/stream/movie/tmdb:${movieId}.json`;
+                
+                console.log('[Player] Fetching:', url);
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Convert Stremio format to player format
+                const streams = data.streams || [];
+                console.log('[Player] Found streams:', streams.length);
+                console.log('[Player] Stream names:', streams.map(s => s.name));
+                
+                // Find any Vidstorm stream
+                const vidstormStream = streams.find(s => s.name && s.name.includes('Vidstorm'));
+                
+                if (!vidstormStream) {
+                    throw new Error('No Vidstorm stream found');
+                }
+                
+                console.log('[Player] Selected stream:', vidstormStream.name);
+                
+                // Create result in expected format (sources must be an array)
+                // Use addon's built-in proxy on port 7000
+                const streamUrl = vidstormStream.url.replace('127.0.0.1:7001', 'localhost:7000');
+                const result = {
+                    movie_id: movieId,
+                    sources: [
+                        {
+                            name: 'Lithium',
+                            url: streamUrl,
+                            type: 'hls',
+                            language: 'English'
+                        }
+                    ],
+                    tmdb_metadata: null
+                };
+                
+                displayResults(result);
+                
+                // Auto-play the stream
+                playStream('Lithium');
+                
+            } catch (err) {
+                showError('Failed to resolve: ' + err.message);
+                console.error(err);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function resolveByImdb() {
+            const imdbId = prompt('Enter IMDB ID (e.g., tt10872600):');
+            if (!imdbId) return;
+            
+            const resolverUrl = document.getElementById('resolverUrl').value;
+            
+            showLoading(true);
+            hideError();
+            
+            try {
+                // Call Stremio addon stream endpoint with IMDB ID
+                const url = `${resolverUrl}/stream/movie/${imdbId}.json`;
+                
+                console.log('[Player] Fetching:', url);
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Convert Stremio format to player format
+                const streams = data.streams || [];
+                console.log('[Player] Found streams:', streams.length);
+                
+                // Find any Vidstorm stream
+                const vidstormStream = streams.find(s => s.name && s.name.includes('Vidstorm'));
+                
+                if (!vidstormStream) {
+                    throw new Error('No Vidstorm stream found');
+                }
+                
+                console.log('[Player] Selected stream:', vidstormStream.name);
+                
+                // Create result (sources must be an array)
+                const result = {
+                    movie_id: imdbId,
+                    sources: [
+                        {
+                            name: 'Lithium',
+                            url: vidstormStream.url,
+                            type: 'hls',
+                            language: 'English'
+                        }
+                    ],
+                    tmdb_metadata: null
+                };
+                
+                displayResults(result);
+                playStream('Lithium');
+                
+            } catch (err) {
+                showError('Failed to resolve: ' + err.message);
+                console.error(err);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayTmdbInfo(metadata) {
+            const container = document.getElementById('tmdbInfo');
+            if (!metadata) {
+                container.classList.add('hidden');
+                return;
+            }
+            
+            container.innerHTML = `
+                <div class="flex gap-4">
+                    ${metadata.poster_path ? `<img src="${metadata.poster_path}" alt="Poster" class="w-24 h-36 object-cover rounded">` : ''}
+                    <div>
+                        <h3 class="text-xl font-bold">${metadata.title || 'Unknown'}</h3>
+                        ${metadata.original_title !== metadata.title ? `<p class="text-gray-400">${metadata.original_title}</p>` : ''}
+                        <p class="text-sm text-gray-300 mt-2">${metadata.overview ? metadata.overview.substring(0, 200) + '...' : ''}</p>
+                        <div class="flex gap-4 mt-2 text-sm text-gray-400">
+                            ${metadata.release_date ? `<span>📅 ${metadata.release_date}</span>` : ''}
+                            ${metadata.runtime ? `<span>⏱️ ${metadata.runtime} min</span>` : ''}
+                            ${metadata.vote_average ? `<span>⭐ ${metadata.vote_average}/10</span>` : ''}
+                            ${metadata.imdb_id ? `<span><a href="https://imdb.com/title/${metadata.imdb_id}" target="_blank" class="text-yellow-500 hover:text-yellow-400">IMDB: ${metadata.imdb_id}</a></span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.classList.remove('hidden');
+        }
+
+        function displayResults(data) {
+            document.getElementById('results').classList.remove('hidden');
+            
+            // Display sources
+            const sourcesList = document.getElementById('sourcesList');
+            sourcesList.innerHTML = '';
+            currentStreams = {};
+            
+            if (data.sources && data.sources.length > 0) {
+                data.sources.forEach((source, index) => {
+                    if (source.url) {
+                        currentStreams[source.name] = source;
+                        
+                        const div = document.createElement('div');
+                        div.className = 'flex items-center justify-between bg-gray-700 rounded p-3';
+                        div.innerHTML = `
+                            <div>
+                                <span class="font-medium">${source.name}</span>
+                                <span class="text-sm text-gray-400 ml-2">(${source.type})</span>
+                                ${source.language ? `<span class="text-sm text-green-400 ml-2">[${source.language}]</span>` : ''}
+                            </div>
+                            <button onclick="console.log('Button clicked'); playStream('${source.name}'); return false;" 
+                                class="px-4 py-1 bg-green-600 hover:bg-green-700 rounded text-sm transition pointer-events-auto">
+                                Play
+                            </button>
+                        `;
+                        sourcesList.appendChild(div);
+                    }
+                });
+            } else {
+                sourcesList.innerHTML = '<p class="text-gray-400">No stream sources found</p>';
+            }
+            
+            // Display subtitles
+            const subtitlesList = document.getElementById('subtitlesList');
+            const subtitleSelect = document.getElementById('subtitleSelect');
+            subtitlesList.innerHTML = '';
+            subtitleSelect.innerHTML = '<option value="">Select Subtitle</option>';
+            currentSubtitles = data.subtitles || [];
+            
+            if (currentSubtitles.length > 0) {
+                currentSubtitles.forEach((sub, index) => {
+                    // Add to grid
+                    const div = document.createElement('div');
+                    div.className = 'bg-gray-700 rounded p-2 text-sm';
+                    div.innerHTML = `<a href="${sub.file}" target="_blank" class="text-blue-400 hover:text-blue-300">${sub.label}</a>`;
+                    subtitlesList.appendChild(div);
+                    
+                    // Add to select
+                    const option = document.createElement('option');
+                    option.value = sub.file;
+                    option.textContent = sub.label;
+                    subtitleSelect.appendChild(option);
+                });
+            } else {
+                subtitlesList.innerHTML = '<p class="text-gray-400 col-span-full">No subtitles available</p>';
+            }
+        }
+
+        async function playStream(sourceName) {
+            console.log('[DEBUG] playStream called with:', sourceName);
+            console.log('[DEBUG] currentStreams:', Object.keys(currentStreams));
+            
+            const source = currentStreams[sourceName];
+            if (!source) {
+                console.error('[DEBUG] Source not found:', sourceName);
+                alert('Error: Source not found - ' + sourceName);
+                return;
+            }
+            
+            console.log('[DEBUG] Source found:', source);
+            
+            const video = document.getElementById('videoPlayer');
+            const resolverUrl = document.getElementById('resolverUrl').value;
+            
+            // Destroy previous HLS instance
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+            
+            // Use source URL directly - addon already returns proxied URLs
+            const streamUrl = source.url;
+            
+            if (source.type === 'hls' || source.url.includes('.m3u8')) {
+                if (Hls.isSupported()) {
+                    console.log('[DEBUG] Creating HLS.js instance...');
+                    
+                    hls = new Hls({
+                        enableWorker: true,
+                        debug: true, // Enable HLS.js internal debugging
+                        xhrSetup: function(xhr, url) {
+                            console.log('[DEBUG] XHR Request:', url.substring(0, 100));
+                            xhr.addEventListener('loadstart', () => {
+                                console.log('[DEBUG] XHR Load Start:', url.substring(0, 80));
+                            });
+                            xhr.addEventListener('load', () => {
+                                console.log('[DEBUG] XHR Load Complete:', xhr.status, url.substring(0, 80));
+                                if (xhr.status === 200 || xhr.status === 206) {
+                                    const contentLength = xhr.getResponseHeader('content-length');
+                                    const contentType = xhr.getResponseHeader('content-type');
+                                    console.log('[DEBUG] Response headers - Type:', contentType, 'Size:', contentLength);
+                                }
+                            });
+                            xhr.addEventListener('error', (e) => {
+                                console.error('[DEBUG] XHR Error:', url.substring(0, 80), e);
+                            });
+                        }
+                    });
+                    
+                    // Add ALL HLS.js event listeners for debugging
+                    hls.on(Hls.Events.MEDIA_ATTACHING, () => console.log('[DEBUG] MEDIA_ATTACHING'));
+                    hls.on(Hls.Events.MEDIA_ATTACHED, () => console.log('[DEBUG] MEDIA_ATTACHED'));
+                    hls.on(Hls.Events.MEDIA_DETACHING, () => console.log('[DEBUG] MEDIA_DETACHING'));
+                    hls.on(Hls.Events.MEDIA_DETACHED, () => console.log('[DEBUG] MEDIA_DETACHED'));
+                    
+                    hls.on(Hls.Events.MANIFEST_LOADING, (event, data) => {
+                        console.log('[DEBUG] MANIFEST_LOADING:', data.url);
+                    });
+                    hls.on(Hls.Events.MANIFEST_LOADED, (event, data) => {
+                        console.log('[DEBUG] MANIFEST_LOADED - Levels:', data.levels.length);
+                        data.levels.forEach((level, i) => {
+                            console.log(`  Level ${i}: ${level.height}p, bitrate: ${level.bitrate}`);
+                        });
+                    });
+                    hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+                        console.log('[DEBUG] MANIFEST_PARSED:', data.levels.length, 'quality levels');
+                        console.log('[DEBUG] First level:', data.firstLevel);
+                        console.log('[DEBUG] Stats:', data.stats);
+                        populateQualityLevels(data.levels);
+                    });
+                    
+                    hls.on(Hls.Events.LEVEL_LOADING, (event, data) => {
+                        console.log('[DEBUG] LEVEL_LOADING - Level:', data.level);
+                    });
+                    hls.on(Hls.Events.LEVEL_LOADED, (event, data) => {
+                        console.log('[DEBUG] LEVEL_LOADED - Level:', data.level);
+                        console.log('[DEBUG] Details duration:', data.details.totalduration);
+                        console.log('[DEBUG] Fragments count:', data.details.fragments.length);
+                    });
+                    hls.on(Hls.Events.LEVEL_SWITCHING, (event, data) => {
+                        console.log('[DEBUG] LEVEL_SWITCHING to level:', data.level);
+                    });
+                    hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+                        console.log('[DEBUG] LEVEL_SWITCHED to level:', data.level);
+                    });
+                    
+                    hls.on(Hls.Events.FRAG_LOADING, (event, data) => {
+                        const frag = data.frag;
+                        console.log('[DEBUG] FRAG_LOADING:', {
+                            sn: frag.sn,
+                            level: frag.level,
+                            start: frag.start,
+                            duration: frag.duration,
+                            url: frag.url.substring(0, 80)
+                        });
+                    });
+                    hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+                        console.log('[DEBUG] FRAG_LOADED:', {
+                            sn: data.frag.sn,
+                            level: data.frag.level,
+                            stats: data.stats
+                        });
+                    });
+                    hls.on(Hls.Events.FRAG_LOAD_EMERGENCY_ABORTED, (event, data) => {
+                        console.warn('[DEBUG] FRAG_LOAD_EMERGENCY_ABORTED:', data);
+                    });
+                    hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
+                        console.log('[DEBUG] FRAG_BUFFERED:', {
+                            sn: data.frag.sn,
+                            level: data.frag.level,
+                            stats: data.stats
+                        });
+                    });
+                    
+                    hls.on(Hls.Events.BUFFER_CREATED, (event, data) => {
+                        console.log('[DEBUG] BUFFER_CREATED:', Object.keys(data.tracks));
+                    });
+                    hls.on(Hls.Events.BUFFER_APPENDING, (event, data) => {
+                        console.log('[DEBUG] BUFFER_APPENDING:', data.type, 'size:', data.data.length);
+                    });
+                    hls.on(Hls.Events.BUFFER_APPENDED, (event, data) => {
+                        console.log('[DEBUG] BUFFER_APPENDED:', data.type);
+                    });
+                    
+                    hls.on(Hls.Events.ERROR, (event, data) => {
+                        console.error('[DEBUG] HLS ERROR:', {
+                            type: data.type,
+                            details: data.details,
+                            fatal: data.fatal,
+                            frag: data.frag ? { sn: data.frag.sn, url: data.frag.url.substring(0, 80) } : null
+                        });
+                        
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    console.error('[DEBUG] FATAL NETWORK ERROR - trying to recover...');
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    console.error('[DEBUG] FATAL MEDIA ERROR - trying to recover...');
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    console.error('[DEBUG] FATAL ERROR - cannot recover');
+                                    showError('Stream error: ' + data.details);
+                                    break;
+                            }
+                        }
+                    });
+                    
+                    // Monitor network stats
+                    hls.on(Hls.Events.FRAG_CHANGED, (event, data) => {
+                        console.log('[DEBUG] FRAG_CHANGED - Current fragment sn:', data.frag.sn);
+                    });
+                    
+                    console.log('[DEBUG] Loading source:', streamUrl);
+                    showDebugPanel(); // Auto-show debug panel
+                    hls.loadSource(streamUrl);
+                    console.log('[DEBUG] Attaching media');
+                    hls.attachMedia(video);
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                } else {
+                    showError('HLS not supported in this browser');
+                    return;
+                }
+            } else {
+                video.src = streamUrl;
+            }
+            
+            video.play().catch(err => {
+                console.error('Play error:', err);
+            });
+        }
+
+        function populateQualityLevels(levels) {
+            const select = document.getElementById('qualitySelect');
+            select.innerHTML = '<option value="">Auto Quality</option>';
+            
+            levels.forEach((level, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                const height = level.height || 'unknown';
+                const bitrate = Math.round(level.bitrate / 1000);
+                option.textContent = `${height}p @ ${bitrate}kbps`;
+                select.appendChild(option);
+            });
+        }
+
+        function changeQuality() {
+            if (!hls) return;
+            
+            const select = document.getElementById('qualitySelect');
+            const level = select.value;
+            
+            if (level === '') {
+                hls.currentLevel = -1; // Auto
+            } else {
+                hls.currentLevel = parseInt(level);
+            }
+        }
+
+        function loadSubtitle() {
+            const select = document.getElementById('subtitleSelect');
+            const url = select.value;
+            const video = document.getElementById('videoPlayer');
+            
+            // Remove existing tracks
+            while (video.querySelector('track')) {
+                video.removeChild(video.querySelector('track'));
+            }
+            
+            if (url) {
+                const track = document.createElement('track');
+                track.kind = 'subtitles';
+                track.src = url;
+                track.default = true;
+                video.appendChild(track);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('hidden', !show);
+        }
+
+        function showError(msg) {
+            const errorDiv = document.getElementById('error');
+            document.getElementById('errorText').textContent = msg;
+            errorDiv.classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('error').classList.add('hidden');
+        }
+
+        // Auto-resolve on load if URL has params
+        window.addEventListener('load', () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('movie')) {
+                document.getElementById('movieId').value = params.get('movie');
+                if (params.get('encoded')) {
+                    document.getElementById('encodedId').value = params.get('encoded');
+                }
+                resolveMovie();
+            } else if (params.get('imdb')) {
+                document.getElementById('encodedId').value = '';
+                const resolverUrl = document.getElementById('resolverUrl').value;
+                fetch(`${resolverUrl}/api/imdb/${params.get('imdb')}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.tmdb_id) {
+                            document.getElementById('movieId').value = data.tmdb_id;
+                            displayResults(data);
+                            displayTmdbInfo(data.tmdb_metadata);
+                        }
+                    });
+            }
+        });
+    </script>
+</body>
+</html>
